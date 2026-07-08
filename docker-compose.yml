@@ -1,0 +1,120 @@
+# ==============================================================================
+# DOCKER COMPOSE — STUDYCROWD (AMBIENTE DE DESENVOLVIMENTO LOCAL)
+# ==============================================================================
+#
+# FILOSOFIA DE UM DEV SÊNIOR:
+# ---------------------------
+# Por que usamos o Docker Compose?
+# Quando trabalhamos com microsserviços (Laravel, Symfony, React) e vários
+# bancos de dados (MySQL, Redis, Elasticsearch), instalar tudo diretamente no 
+# sistema operacional da máquina (Mac/Windows/Linux) causa o famoso problema:
+# "na minha máquina funciona, na sua não".
+#
+# O Docker isola cada serviço em um "container" (como se fosse um mini-computador
+# dedicado apenas para aquilo), garantindo que todos os desenvolvedores do time
+# e o servidor de produção rodem EXATAMENTE as mesmas versões.
+#
+# ESTRUTURA ATUAL (FASE 1 — FOUNDATION):
+# --------------------------------------
+# Nesta fase inicial, estamos subindo os bancos essenciais para a fundação:
+# 1. MySQL 8.0: O banco relacional principal (guardará usuários, imóveis e avaliações).
+# 2. Redis 7.0: Banco em memória hiper-rápido (usaremos para gerenciar filas assíncronas).
+#
+# NOTA PEDAGÓGICA SOBRE A ORDEM DAS COISAS:
+# Por que não colocamos o Laravel (PHP), o Symfony ou o Elasticsearch aqui ainda?
+# Porque em arquiteturas avançadas, nós adicionamos complexidade passo a passo.
+# Primeiro garantimos que a camada de dados (MySQL/Redis) está de pé, saudável e persistida.
+# No próximo passo, vamos criar a pasta da nossa API Laravel ('/api') e então
+# adicionaremos o serviço do PHP e Nginx aqui apontando para o código!
+# ==============================================================================
+
+services:
+  # ============================================================================
+  # SERVIÇO 1: BANCO DE DADOS RELACIONAL (MySQL 8.0)
+  # ============================================================================
+  # Responsabilidade: Armazenar a verdade transacional do sistema (Imóveis, Avaliações, Usuários).
+  mysql:
+    # Usamos a imagem oficial do MySQL na versão 8.0 (especificada no briefing).
+    # NUNCA use 'latest' em projetos reais, pois uma atualização oculta pode quebrar seu sistema.
+    image: mysql:8.0.36
+    
+    # Nome que aparecerá no seu terminal ao rodar 'docker ps'. Facilitará a depuração.
+    container_name: studycrowd-mysql
+    
+    # Se o container cair (por erro de memória ou reinicialização do Docker), ele reinicia sozinho.
+    restart: unless-stopped
+    
+    # TTY e stdin_open ajudam a manter o container interativo caso precisemos entrar no bash dele.
+    tty: true
+    
+    # Mapeamento de Portas: [PORTA_DA_SUA_MAQUINA]:[PORTA_DO_CONTAINER]
+    # O MySQL internamente sempre roda na porta 3306. Nós expomos a 3306 na sua máquina
+    # para que você possa conectar clientes gráficos (como TablePlus, DBeaver ou MySQL Workbench)
+    # ou rodar scripts locais contra o banco.
+    ports:
+      - "3306:3306"
+    
+    # Variáveis de Ambiente necessárias para o container inicializar o banco pela primeira vez.
+    environment:
+      MYSQL_DATABASE: studycrowd_db      # Nome do banco que o Docker criará automaticamente.
+      MYSQL_ROOT_PASSWORD: root_password  # Senha do usuário root (só para ambiente DEV!).
+      MYSQL_USER: studycrowd_user        # Usuário da nossa aplicação Laravel.
+      MYSQL_PASSWORD: secret_password    # Senha da aplicação Laravel.
+    
+    # Volumes: Persistência de Dados
+    # Se você apagar um container sem volumes, todos os seus dados do banco somem!
+    # O volume mapeia uma pasta virtual do Docker ('mysql_data') para dentro da pasta
+    # onde o MySQL salva os arquivos reais lá no container ('/var/lib/mysql').
+    volumes:
+      - mysql_data:/var/lib/mysql
+    
+    # Redes: Definimos em qual rede virtual esse container vai morar.
+    # Apenas containers na mesma rede conseguem conversar entre si usando o nome do serviço
+    # (ex: o Laravel vai se conectar no MySQL usando o host 'mysql' e não 'localhost').
+    networks:
+      - studycrowd-network
+    
+    # Healthcheck (Verificação de Saúde):
+    # Uma prática de Sênior! Não basta o container ligar, precisamos saber se o MySQL
+    # já terminou de carregar e está pronto para aceitar conexões antes de tentar rodar migrations.
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_password"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
+  # SERVIÇO 2: BANCO EM MEMÓRIA / FILAS ASSÍNCRONAS (Redis 7)
+  # ============================================================================
+  # Responsabilidade: Gerenciar cache e filas de background (Jobs).
+  # No nosso briefing, o Redis será crucial na Fase 2 para enfileirar a indexação
+  # do Elasticsearch sem travar a resposta HTTP do usuário.
+  redis:
+    image: redis:7.2-alpine # 'alpine' é uma versão otimizada e ultra-leve do Linux (menos de 30MB).
+    container_name: studycrowd-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379" # Porta padrão do Redis.
+    volumes:
+      - redis_data:/data # Persiste os dados do Redis em disco para não perder filas pendentes ao reiniciar.
+    networks:
+      - studycrowd-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+# ==============================================================================
+# DEFINIÇÃO DE VOLUMES E REDES GLOBAIS
+# ==============================================================================
+# Declaramos aqui no final os volumes e redes que foram referenciados acima.
+volumes:
+  mysql_data:
+    driver: local # O Docker gerencia o armazenamento localmente no seu Mac.
+  redis_data:
+    driver: local
+
+networks:
+  studycrowd-network:
+    driver: bridge # 'bridge' é o driver padrão que cria uma rede interna isolada no seu computador.
